@@ -6,11 +6,11 @@ import {
 } from 'recharts'
 
 /* ─── Constants ─── */
-const CAMPOS = ['MJ1','MJ3','MJ4','MJ5','MJ6','MJ8']
+const CAMPOS = ['MJ1','MJ3','MJ4','MJ5','MJ6','MJ8','Don Roberto','La Navidad','Las Mercedes','Santa Maria','Los Vergeles']
 const ACTIVIDADES = ['Aplicación','Rastrillo','Fumigación','Batanga','Transporte','Mantenimiento','Remolque','Otro']
 const TIPOS_MTTO = ['Preventivo','Correctivo','Emergencia']
 const COLORS = ['#1D9E75','#378ADD','#D85A30','#BA7517','#534AB7','#D4537E','#639922','#E24B4A']
-const CAMPO_COLORS = {MJ1:'#1D9E75',MJ3:'#378ADD',MJ4:'#D85A30',MJ5:'#534AB7',MJ6:'#BA7517',MJ8:'#D4537E'}
+const CAMPO_COLORS = {MJ1:'#1D9E75',MJ3:'#378ADD',MJ4:'#D85A30',MJ5:'#534AB7',MJ6:'#BA7517',MJ8:'#D4537E','Don Roberto':'#639922','La Navidad':'#0E7C86','Las Mercedes':'#A0522D','Santa Maria':'#C2185B','Los Vergeles':'#5C6BC0'}
 
 const NAV = [
   {id:'dashboard', label:'Dashboard', emoji:'📊'},
