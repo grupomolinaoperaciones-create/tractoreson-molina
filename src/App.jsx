@@ -374,17 +374,26 @@ function Diesel({diesel,setDiesel,tractores,loading}){
 /* ─── Mantenimientos ─── */
 function Mantenimientos({mtto,setMtto,tractores,loading}){
   const [showForm,setShowForm]=useState(false)
+  const [editId,setEditId]=useState(null)
   const [saving,setSaving]=useState(false)
   const [filterEstado,setFilterEstado]=useState('Todos')
   const [fotoPreviews,setFotoPreviews]=useState([])
-  const [form,setForm]=useState({
-    fecha:new Date().toISOString().split('T')[0],
-    tractor_id:'',tipo:'Preventivo',descripcion:'',
-    mano_obra:'',refacciones:'',tecnico:'',
-    estado:'En proceso',observaciones:'',
-  })
+  const emptyForm={fecha:new Date().toISOString().split('T')[0],tractor_id:'',tipo:'Preventivo',descripcion:'',mano_obra:'',refacciones:'',tecnico:'',estado:'En proceso',observaciones:''}
+  const [form,setForm]=useState(emptyForm)
 
-  const handleFotos=async(e)=>{
+  const openNew=()=>{setEditId(null);setForm(emptyForm);setFotoPreviews([]);setShowForm(true)}
+  const openEdit=(m)=>{
+    setEditId(m.id)
+    setForm({fecha:m.fecha,tractor_id:m.tractor_id,tipo:m.tipo,descripcion:m.descripcion,mano_obra:m.mano_obra||'',refacciones:m.refacciones||'',tecnico:m.tecnico||'',estado:m.estado,observaciones:m.observaciones||''})
+    setFotoPreviews(m.fotos||[])
+    setShowForm(true)
+  }
+  const handleChangeEstado=async(id,nuevoEstado)=>{
+    await supabase.from('mantenimientos').update({estado:nuevoEstado}).eq('id',id)
+    setMtto(m=>m.map(x=>x.id===id?{...x,estado:nuevoEstado}:x))
+  }
+
+  const handleFotos=(e)=>{
     const files=Array.from(e.target.files)
     const previews=files.map(f=>URL.createObjectURL(f))
     setFotoPreviews(p=>[...p,...previews])
@@ -394,13 +403,14 @@ function Mantenimientos({mtto,setMtto,tractores,loading}){
     if(!form.tractor_id||!form.descripcion){alert('Tractor y descripción son obligatorios');return}
     setSaving(true)
     const row={...form,mano_obra:+form.mano_obra||0,refacciones:+form.refacciones||0,fotos:fotoPreviews}
-    const {data,error}=await supabase.from('mantenimientos').insert([row]).select()
-    if(error){alert('Error: '+error.message)}
-    else{
-      setMtto(m=>[data[0],...m])
-      setShowForm(false)
-      setFotoPreviews([])
-      setForm({fecha:new Date().toISOString().split('T')[0],tractor_id:'',tipo:'Preventivo',descripcion:'',mano_obra:'',refacciones:'',tecnico:'',estado:'En proceso',observaciones:''})
+    if(editId){
+      const {error}=await supabase.from('mantenimientos').update(row).eq('id',editId)
+      if(error){alert('Error: '+error.message)}
+      else{setMtto(m=>m.map(x=>x.id===editId?{...x,...row}:x));setShowForm(false)}
+    } else {
+      const {data,error}=await supabase.from('mantenimientos').insert([row]).select()
+      if(error){alert('Error: '+error.message)}
+      else{setMtto(m=>[data[0],...m]);setShowForm(false)}
     }
     setSaving(false)
   }
@@ -419,7 +429,7 @@ function Mantenimientos({mtto,setMtto,tractores,loading}){
     <div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
         <h2 style={{fontSize:18,fontWeight:600,margin:0}}>Mantenimientos</h2>
-        <Btn onClick={()=>setShowForm(true)} color="#378ADD">+ Nuevo mantenimiento</Btn>
+        <Btn onClick={openNew} color="#378ADD">+ Nuevo mantenimiento</Btn>
       </div>
 
       <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
@@ -443,8 +453,9 @@ function Mantenimientos({mtto,setMtto,tractores,loading}){
                   <Badge color={tipoColor[m.tipo]||'gray'}>{m.tipo}</Badge>
                   <Badge color={estadoColor[m.estado]||'gray'}>{m.estado}</Badge>
                 </div>
-                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                <div style={{display:'flex',gap:6,alignItems:'center'}}>
                   <span style={{fontSize:12,color:'var(--text3)'}}>{m.fecha}</span>
+                  <button onClick={()=>openEdit(m)} style={{background:'none',border:'0.5px solid var(--border)',borderRadius:6,color:'#378ADD',cursor:'pointer',fontSize:12,padding:'3px 8px',fontWeight:500}}>✏️ Editar</button>
                   <button onClick={()=>handleDelete(m.id)} style={{background:'none',border:'none',color:'var(--text3)',cursor:'pointer',fontSize:16}}>🗑</button>
                 </div>
               </div>
@@ -455,6 +466,12 @@ function Mantenimientos({mtto,setMtto,tractores,loading}){
                 <span>💵 Mano de obra: <strong style={{color:'#1D9E75'}}>${Number(m.mano_obra).toLocaleString()}</strong></span>
                 <span>🔩 Refacciones: <strong style={{color:'#D85A30'}}>${Number(m.refacciones).toLocaleString()}</strong></span>
                 <span style={{fontWeight:600,color:'var(--text)'}}>Total: ${(Number(m.mano_obra)+Number(m.refacciones)).toLocaleString()}</span>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginTop:8}}>
+                <span style={{fontSize:11,color:'var(--text3)'}}>Cambiar estado:</span>
+                <select value={m.estado} onChange={e=>handleChangeEstado(m.id,e.target.value)} style={{padding:'4px 10px',borderRadius:6,fontSize:12,fontWeight:500,cursor:'pointer',border:'0.5px solid var(--border2)',background:'var(--bg2)',color:'var(--text)'}}>
+                  {['En proceso','Completado','Pendiente','Cancelado'].map(s=><option key={s}>{s}</option>)}
+                </select>
               </div>
               {m.fotos&&m.fotos.length>0&&(
                 <div style={{display:'flex',gap:8,marginTop:10,flexWrap:'wrap'}}>
@@ -469,7 +486,7 @@ function Mantenimientos({mtto,setMtto,tractores,loading}){
       )}
 
       {showForm&&(
-        <Modal title="Nuevo mantenimiento" onClose={()=>setShowForm(false)} wide>
+        <Modal title={editId?'Editar mantenimiento':'Nuevo mantenimiento'} onClose={()=>setShowForm(false)} wide>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
             <Field label="Fecha"><input type="date" value={form.fecha} onChange={e=>setForm(f=>({...f,fecha:e.target.value}))}/></Field>
             <Field label="Tractor *">
@@ -525,7 +542,7 @@ function Mantenimientos({mtto,setMtto,tractores,loading}){
           </Field>
           <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:8}}>
             <Btn outline color="#888" onClick={()=>setShowForm(false)}>Cancelar</Btn>
-            <Btn color="#378ADD" onClick={handleSubmit} disabled={saving}>{saving?'Guardando...':'Guardar mantenimiento'}</Btn>
+            <Btn color="#378ADD" onClick={handleSubmit} disabled={saving}>{saving?'Guardando...':(editId?'Guardar cambios':'Guardar mantenimiento')}</Btn>
           </div>
         </Modal>
       )}
