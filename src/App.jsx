@@ -16,9 +16,12 @@ const NAV = [
   {id:'dashboard', label:'Dashboard', emoji:'📊'},
   {id:'diesel',    label:'Diesel',    emoji:'⛽'},
   {id:'mtto',      label:'Mantenimientos', emoji:'🔧'},
+  {id:'autorizaciones', label:'Autorizaciones', emoji:'📋'},
   {id:'analisis',  label:'Análisis',  emoji:'📈'},
   {id:'flotilla',  label:'Flotilla',  emoji:'🚜'},
 ]
+
+const ESTADOS_AUTORIZACION = ['Pendiente','Autorizado','Rechazado']
 
 /* ─── UI Primitives ─── */
 function Badge({color='info', children}){
@@ -653,6 +656,280 @@ function Analisis({diesel,tractores,mtto}){
   )
 }
 
+/* ─── Autorizaciones de mantenimiento (Contraloría) ─── */
+function InformeImprimible({sol, tractor, onClose}){
+  const handlePrint = () => window.print()
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:2000,overflowY:'auto',padding:'24px 12px'}}>
+      <div style={{maxWidth:760,margin:'0 auto',background:'#fff',borderRadius:8,padding:'40px 48px',color:'#1a1a18'}} id="informe-print-area">
+        <div className="no-print" style={{display:'flex',justifyContent:'flex-end',gap:8,marginBottom:20}}>
+          <button onClick={handlePrint} style={{padding:'8px 18px',borderRadius:8,background:'#378ADD',color:'#fff',border:'none',cursor:'pointer',fontSize:13,fontWeight:500}}>🖨️ Imprimir / Guardar PDF</button>
+          <button onClick={onClose} style={{padding:'8px 18px',borderRadius:8,background:'none',border:'0.5px solid #ccc',cursor:'pointer',fontSize:13}}>Cerrar</button>
+        </div>
+
+        <div style={{textAlign:'center',marginBottom:24,borderBottom:'2px solid #1D9E75',paddingBottom:16}}>
+          <h1 style={{fontSize:20,fontWeight:700,margin:'0 0 4px'}}>Solicitud de Autorización de Mantenimiento</h1>
+          <p style={{fontSize:13,color:'#5F5E5A',margin:0}}>Grupo Molina · Flotilla de Tractores · Folio #{sol.id}</p>
+        </div>
+
+        <table style={{width:'100%',fontSize:13,borderCollapse:'collapse',marginBottom:20}}>
+          <tbody>
+            <tr><td style={{padding:'6px 0',fontWeight:600,width:160}}>Fecha de solicitud:</td><td>{sol.fecha}</td></tr>
+            <tr><td style={{padding:'6px 0',fontWeight:600}}>Tractor:</td><td>{sol.tractor_id} {tractor?`— Campo ${tractor.campo}`:''}</td></tr>
+            <tr><td style={{padding:'6px 0',fontWeight:600}}>Solicitado por:</td><td>{sol.solicitante||'—'}</td></tr>
+            <tr><td style={{padding:'6px 0',fontWeight:600}}>Proveedor / Mecánico externo:</td><td>{sol.proveedor||'—'}</td></tr>
+            <tr><td style={{padding:'6px 0',fontWeight:600}}>Costo estimado:</td><td>${Number(sol.costo_estimado||0).toLocaleString()}</td></tr>
+            <tr><td style={{padding:'6px 0',fontWeight:600}}>Estado:</td><td><strong>{sol.estado}</strong></td></tr>
+          </tbody>
+        </table>
+
+        <div style={{marginBottom:20}}>
+          <p style={{fontWeight:600,fontSize:13,marginBottom:6}}>Descripción del trabajo a realizar:</p>
+          <p style={{fontSize:13,color:'#333',background:'#f7f7f5',padding:'10px 12px',borderRadius:6}}>{sol.descripcion}</p>
+        </div>
+
+        {sol.pieza_danada&&(
+          <div style={{marginBottom:20}}>
+            <p style={{fontWeight:600,fontSize:13,marginBottom:6}}>Pieza dañada / observaciones técnicas:</p>
+            <p style={{fontSize:13,color:'#333',background:'#f7f7f5',padding:'10px 12px',borderRadius:6}}>{sol.pieza_danada}</p>
+          </div>
+        )}
+
+        {sol.fotos&&sol.fotos.length>0&&(
+          <div style={{marginBottom:20}}>
+            <p style={{fontWeight:600,fontSize:13,marginBottom:8}}>Evidencia fotográfica:</p>
+            <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+              {sol.fotos.map((url,i)=><img key={i} src={url} alt={`Evidencia ${i+1}`} style={{width:150,height:110,objectFit:'cover',borderRadius:6,border:'1px solid #ddd'}}/>)}
+            </div>
+          </div>
+        )}
+
+        {sol.comentarios_contraloria&&(
+          <div style={{marginBottom:20}}>
+            <p style={{fontWeight:600,fontSize:13,marginBottom:6}}>Comentarios de Contraloría:</p>
+            <p style={{fontSize:13,color:'#333',background:'#f7f7f5',padding:'10px 12px',borderRadius:6}}>{sol.comentarios_contraloria}</p>
+          </div>
+        )}
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:30,marginTop:48,paddingTop:24,borderTop:'1px solid #ddd'}}>
+          <div style={{textAlign:'center'}}>
+            <div style={{borderTop:'1px solid #333',marginTop:40,paddingTop:6,fontSize:12}}>Solicitante</div>
+          </div>
+          <div style={{textAlign:'center'}}>
+            <div style={{borderTop:'1px solid #333',marginTop:40,paddingTop:6,fontSize:12}}>
+              Autorizado por Contraloría{sol.autorizado_por?` — ${sol.autorizado_por}`:''}
+              {sol.fecha_resolucion&&<div style={{color:'#888'}}>{sol.fecha_resolucion}</div>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Autorizaciones({autorizaciones,setAutorizaciones,tractores,loading}){
+  const [showForm,setShowForm]=useState(false)
+  const [saving,setSaving]=useState(false)
+  const [filterEstado,setFilterEstado]=useState('Todos')
+  const [fotoPreviews,setFotoPreviews]=useState([])
+  const [informeSol,setInformeSol]=useState(null)
+  const [resolModal,setResolModal]=useState(null) // {sol, accion}
+  const [comentario,setComentario]=useState('')
+  const [autorizadoPor,setAutorizadoPor]=useState('')
+
+  const emptyForm={fecha:new Date().toISOString().split('T')[0],tractor_id:'',solicitante:'',proveedor:'',descripcion:'',pieza_danada:'',costo_estimado:'',estado:'Pendiente'}
+  const [form,setForm]=useState(emptyForm)
+
+  const handleFotos=(e)=>{
+    const files=Array.from(e.target.files)
+    const urls=files.map(f=>URL.createObjectURL(f))
+    setFotoPreviews(p=>[...p,...urls])
+  }
+
+  const handleSubmit=async()=>{
+    if(!form.tractor_id||!form.descripcion||!form.proveedor){alert('Tractor, proveedor y descripción son obligatorios');return}
+    setSaving(true)
+    const row={...form,costo_estimado:+form.costo_estimado||0,fotos:fotoPreviews}
+    const {data,error}=await supabase.from('autorizaciones_mtto').insert([row]).select()
+    if(error){alert('Error: '+error.message)}
+    else{
+      setAutorizaciones(a=>[data[0],...a])
+      setShowForm(false)
+      setFotoPreviews([])
+      setForm(emptyForm)
+    }
+    setSaving(false)
+  }
+
+  const handleDelete=async(id)=>{
+    if(!confirm('¿Eliminar esta solicitud?'))return
+    await supabase.from('autorizaciones_mtto').delete().eq('id',id)
+    setAutorizaciones(a=>a.filter(x=>x.id!==id))
+  }
+
+  const openResol=(sol,accion)=>{
+    setResolModal({sol,accion})
+    setComentario(sol.comentarios_contraloria||'')
+    setAutorizadoPor(sol.autorizado_por||'')
+  }
+
+  const confirmResol=async()=>{
+    const {sol,accion}=resolModal
+    const nuevoEstado = accion==='autorizar' ? 'Autorizado' : 'Rechazado'
+    const row={
+      estado:nuevoEstado,
+      comentarios_contraloria:comentario,
+      autorizado_por:autorizadoPor,
+      fecha_resolucion:new Date().toISOString().split('T')[0]
+    }
+    const {error}=await supabase.from('autorizaciones_mtto').update(row).eq('id',sol.id)
+    if(error){alert('Error: '+error.message);return}
+    setAutorizaciones(a=>a.map(x=>x.id===sol.id?{...x,...row}:x))
+    setResolModal(null)
+  }
+
+  const estadoColor={Pendiente:'warning',Autorizado:'success',Rechazado:'danger'}
+  const tractorMap=Object.fromEntries(tractores.map(t=>[t.id,t]))
+  const rows=autorizaciones.filter(a=>filterEstado==='Todos'||a.estado===filterEstado)
+  const pendientesCount=autorizaciones.filter(a=>a.estado==='Pendiente').length
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <div>
+          <h2 style={{fontSize:18,fontWeight:600,margin:'0 0 2px'}}>Autorizaciones de mantenimiento</h2>
+          <p style={{fontSize:12,color:'var(--text3)',margin:0}}>Solicitudes para Contraloría · {pendientesCount} pendiente{pendientesCount!==1?'s':''}</p>
+        </div>
+        <Btn onClick={()=>setShowForm(true)} color="#534AB7">+ Nueva solicitud</Btn>
+      </div>
+
+      <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
+        {['Todos',...ESTADOS_AUTORIZACION].map(e=>(
+          <button key={e} onClick={()=>setFilterEstado(e)} style={{
+            padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:500,
+            border:filterEstado===e?'1.5px solid #534AB7':'0.5px solid var(--border)',
+            background:filterEstado===e?'#EEEDFE':'transparent',
+            color:filterEstado===e?'#3C3489':'var(--text2)'
+          }}>{e}</button>
+        ))}
+      </div>
+
+      {loading?<Spinner/>:rows.length===0?<EmptyState msg="Sin solicitudes de autorización registradas."/>:(
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          {rows.map(sol=>{
+            const tractor=tractorMap[sol.tractor_id]
+            return(
+              <div key={sol.id} style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:12,padding:'14px 16px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:8,flexWrap:'wrap',gap:8}}>
+                  <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                    <span style={{fontSize:15,fontWeight:700}}>{sol.tractor_id}</span>
+                    {tractor&&<Badge color="gray">{tractor.campo}</Badge>}
+                    <Badge color={estadoColor[sol.estado]||'gray'}>{sol.estado}</Badge>
+                    <span style={{fontSize:11,color:'var(--text3)'}}>Folio #{sol.id}</span>
+                  </div>
+                  <div style={{display:'flex',gap:6}}>
+                    <button onClick={()=>setInformeSol(sol)} style={{fontSize:12,padding:'4px 10px',borderRadius:6,border:'0.5px solid var(--border2)',background:'none',cursor:'pointer',color:'var(--text2)'}}>📄 Ver informe</button>
+                    <button onClick={()=>handleDelete(sol.id)} style={{background:'none',border:'none',color:'var(--text3)',cursor:'pointer',fontSize:16}}>🗑</button>
+                  </div>
+                </div>
+                <p style={{margin:'0 0 6px',fontSize:14,fontWeight:500}}>{sol.descripcion}</p>
+                {sol.pieza_danada&&<p style={{margin:'0 0 8px',fontSize:13,color:'var(--text2)'}}>🔩 Pieza dañada: {sol.pieza_danada}</p>}
+                <div style={{display:'flex',gap:16,fontSize:13,color:'var(--text2)',flexWrap:'wrap',alignItems:'center'}}>
+                  <span>🏭 Proveedor: <strong style={{color:'var(--text)'}}>{sol.proveedor}</strong></span>
+                  <span>💵 Estimado: <strong style={{color:'#534AB7'}}>${Number(sol.costo_estimado||0).toLocaleString()}</strong></span>
+                  {sol.solicitante&&<span>👤 {sol.solicitante}</span>}
+                  <span style={{color:'var(--text3)'}}>{sol.fecha}</span>
+                </div>
+                {sol.fotos?.length>0&&(
+                  <div style={{display:'flex',gap:8,marginTop:10,flexWrap:'wrap'}}>
+                    {sol.fotos.map((url,i)=><img key={i} src={url} alt="" style={{width:70,height:54,objectFit:'cover',borderRadius:6,border:'0.5px solid var(--border)'}}/>)}
+                  </div>
+                )}
+                {sol.estado==='Pendiente'?(
+                  <div style={{display:'flex',gap:8,marginTop:12,paddingTop:12,borderTop:'0.5px solid var(--border)'}}>
+                    <Btn color="#1D9E75" small onClick={()=>openResol(sol,'autorizar')}>✓ Autorizar (Contraloría)</Btn>
+                    <Btn color="#A32D2D" outline small onClick={()=>openResol(sol,'rechazar')}>✕ Rechazar</Btn>
+                  </div>
+                ) : (
+                  <div style={{marginTop:10,paddingTop:10,borderTop:'0.5px solid var(--border)',fontSize:12,color:'var(--text2)'}}>
+                    {sol.estado==='Autorizado'?'✓ Autorizado':'✕ Rechazado'} por <strong>{sol.autorizado_por||'Contraloría'}</strong> el {sol.fecha_resolucion}
+                    {sol.comentarios_contraloria&&<div style={{marginTop:4,fontStyle:'italic'}}>"{sol.comentarios_contraloria}"</div>}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {showForm&&(
+        <Modal title="Nueva solicitud de autorización" onClose={()=>setShowForm(false)} wide>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
+            <Field label="Fecha"><input type="date" value={form.fecha} onChange={e=>setForm(f=>({...f,fecha:e.target.value}))}/></Field>
+            <Field label="Tractor *">
+              <select value={form.tractor_id} onChange={e=>setForm(f=>({...f,tractor_id:e.target.value}))}>
+                <option value="">Seleccionar...</option>
+                {tractores.map(t=><option key={t.id} value={t.id}>{t.id} — {t.campo}</option>)}
+              </select>
+            </Field>
+            <Field label="Solicitado por"><input type="text" placeholder="Nombre" value={form.solicitante} onChange={e=>setForm(f=>({...f,solicitante:e.target.value}))}/></Field>
+            <Field label="Proveedor / Mecánico externo *"><input type="text" placeholder="Nombre del taller o mecánico" value={form.proveedor} onChange={e=>setForm(f=>({...f,proveedor:e.target.value}))}/></Field>
+          </div>
+          <Field label="Descripción del trabajo a realizar *">
+            <textarea value={form.descripcion} rows={3} onChange={e=>setForm(f=>({...f,descripcion:e.target.value}))} style={{resize:'vertical'}}/>
+          </Field>
+          <Field label="Pieza dañada / observaciones técnicas">
+            <textarea value={form.pieza_danada} rows={2} placeholder="Especificar la pieza que presenta daño..." onChange={e=>setForm(f=>({...f,pieza_danada:e.target.value}))} style={{resize:'vertical'}}/>
+          </Field>
+          <Field label="Costo estimado ($)"><input type="number" placeholder="0" value={form.costo_estimado} onChange={e=>setForm(f=>({...f,costo_estimado:e.target.value}))}/></Field>
+          <Field label="📷 Fotos de la pieza dañada">
+            <label style={{display:'inline-flex',alignItems:'center',gap:8,padding:'8px 16px',border:'1px dashed var(--border2)',borderRadius:8,cursor:'pointer',fontSize:13,color:'var(--text2)'}}>
+              Subir fotos
+              <input type="file" accept="image/*" multiple onChange={handleFotos} style={{display:'none'}}/>
+            </label>
+            {fotoPreviews.length>0&&(
+              <div style={{display:'flex',gap:8,marginTop:8,flexWrap:'wrap'}}>
+                {fotoPreviews.map((url,i)=>(
+                  <div key={i} style={{position:'relative'}}>
+                    <img src={url} alt="" style={{width:72,height:56,objectFit:'cover',borderRadius:6,border:'0.5px solid var(--border)'}}/>
+                    <button onClick={()=>setFotoPreviews(p=>p.filter((_,j)=>j!==i))} style={{position:'absolute',top:-4,right:-4,background:'#E24B4A',color:'#fff',border:'none',borderRadius:'50%',width:16,height:16,fontSize:10,cursor:'pointer',lineHeight:1}}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Field>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:8}}>
+            <Btn outline color="#888" onClick={()=>setShowForm(false)}>Cancelar</Btn>
+            <Btn color="#534AB7" onClick={handleSubmit} disabled={saving}>{saving?'Enviando...':'Enviar solicitud'}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {resolModal&&(
+        <Modal title={resolModal.accion==='autorizar'?'Autorizar solicitud':'Rechazar solicitud'} onClose={()=>setResolModal(null)}>
+          <p style={{fontSize:13,color:'var(--text2)',marginBottom:14}}>
+            Tractor <strong>{resolModal.sol.tractor_id}</strong> — {resolModal.sol.descripcion}
+          </p>
+          <Field label="Autorizado / Rechazado por (Contraloría)">
+            <input type="text" placeholder="Nombre de quien resuelve" value={autorizadoPor} onChange={e=>setAutorizadoPor(e.target.value)}/>
+          </Field>
+          <Field label="Comentarios">
+            <textarea rows={3} placeholder="Comentarios de Contraloría (opcional)" value={comentario} onChange={e=>setComentario(e.target.value)} style={{resize:'vertical'}}/>
+          </Field>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:8}}>
+            <Btn outline color="#888" onClick={()=>setResolModal(null)}>Cancelar</Btn>
+            <Btn color={resolModal.accion==='autorizar'?'#1D9E75':'#A32D2D'} onClick={confirmResol}>
+              {resolModal.accion==='autorizar'?'Confirmar autorización':'Confirmar rechazo'}
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
+      {informeSol&&<InformeImprimible sol={informeSol} tractor={tractorMap[informeSol.tractor_id]} onClose={()=>setInformeSol(null)}/>}
+    </div>
+  )
+}
+
 /* ─── Flotilla ─── */
 function Flotilla({tractores,setTractores,loading}){
   const [showForm,setShowForm]=useState(false)
@@ -751,23 +1028,26 @@ export default function App(){
   const [tractores,setTractores]=useState([])
   const [diesel,setDiesel]=useState([])
   const [mtto,setMtto]=useState([])
+  const [autorizaciones,setAutorizaciones]=useState([])
   const [loading,setLoading]=useState(true)
   const [dbError,setDbError]=useState(null)
 
   const loadAll=useCallback(async()=>{
     setLoading(true)
     try{
-      const [t,d,m]=await Promise.all([
+      const [t,d,m,a]=await Promise.all([
         supabase.from('tractores').select('*').order('id'),
         supabase.from('diesel_registros').select('*').order('fecha',{ascending:false}),
         supabase.from('mantenimientos').select('*').order('fecha',{ascending:false}),
+        supabase.from('autorizaciones_mtto').select('*').order('fecha',{ascending:false}),
       ])
-      if(t.error||d.error||m.error){
+      if(t.error||d.error||m.error||a.error){
         setDbError('No se pudieron cargar los datos. Verifica que las tablas existan en Supabase.')
       } else {
         setTractores(t.data||[])
         setDiesel(d.data||[])
         setMtto(m.data||[])
+        setAutorizaciones(a.data||[])
       }
     }catch(e){
       setDbError('Error de conexión: '+e.message)
@@ -824,6 +1104,7 @@ export default function App(){
         {page==='dashboard' && <Dashboard diesel={diesel} tractores={tractores} mtto={mtto}/>}
         {page==='diesel'    && <Diesel diesel={diesel} setDiesel={setDiesel} tractores={tractores} loading={loading}/>}
         {page==='mtto'      && <Mantenimientos mtto={mtto} setMtto={setMtto} tractores={tractores} loading={loading}/>}
+        {page==='autorizaciones' && <Autorizaciones autorizaciones={autorizaciones} setAutorizaciones={setAutorizaciones} tractores={tractores} loading={loading}/>}
         {page==='analisis'  && <Analisis diesel={diesel} tractores={tractores} mtto={mtto}/>}
         {page==='flotilla'  && <Flotilla tractores={tractores} setTractores={setTractores} loading={loading}/>}
       </div>
