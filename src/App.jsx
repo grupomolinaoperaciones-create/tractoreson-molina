@@ -587,30 +587,93 @@ function Mantenimientos({mtto,setMtto,tractores,loading}){
   }
   const estadoColor={Completado:'success','En proceso':'warning',Pendiente:'info',Cancelado:'danger'}
   const tipoColor={Preventivo:'info',Correctivo:'warning',Emergencia:'danger'}
-  const rows=mtto.filter(m=>filterEstado==='Todos'||m.estado===filterEstado)
+  const [filterCampo,setFilterCampo]=useState('Todos')
+  const [filterTractor,setFilterTractor]=useState('Todos')
+  const [filterTipo,setFilterTipo]=useState('Todos')
+  const [filterDesde,setFilterDesde]=useState('')
+  const [filterHasta,setFilterHasta]=useState('')
+  const tractorMap=Object.fromEntries(tractores.map(t=>[t.id,t]))
+  const ids=[...new Set(tractores.map(t=>t.id))].sort()
+
+  const rows=useMemo(()=>mtto.filter(m=>{
+    if(filterEstado!=='Todos'&&m.estado!==filterEstado) return false
+    if(filterCampo!=='Todos'&&tractorMap[m.tractor_id]?.campo!==filterCampo) return false
+    if(filterTractor!=='Todos'&&m.tractor_id!==filterTractor) return false
+    if(filterTipo!=='Todos'&&m.tipo!==filterTipo) return false
+    if(filterDesde&&m.fecha<filterDesde) return false
+    if(filterHasta&&m.fecha>filterHasta) return false
+    return true
+  }),[mtto,filterEstado,filterCampo,filterTractor,filterTipo,filterDesde,filterHasta,tractorMap])
+
+  const totalCosto=rows.reduce((s,m)=>s+(+m.mano_obra||0)+(+m.refacciones||0),0)
+  const hayFiltros=filterCampo!=='Todos'||filterTractor!=='Todos'||filterTipo!=='Todos'||filterDesde||filterHasta
+
+  const limpiarFiltros=()=>{setFilterCampo('Todos');setFilterTractor('Todos');setFilterTipo('Todos');setFilterDesde('');setFilterHasta('')}
+
   return <div>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-      <h2 style={{fontSize:18,fontWeight:600,margin:0}}>Mantenimientos</h2>
+      <div>
+        <h2 style={{fontSize:18,fontWeight:600,margin:'0 0 2px'}}>Mantenimientos</h2>
+        <p style={{fontSize:12,color:'var(--text3)',margin:0}}>{rows.length} registros · Costo: <strong style={{color:'#378ADD'}}>${totalCosto.toLocaleString()}</strong></p>
+      </div>
       <Btn onClick={openNew} color="#378ADD">+ Nuevo mantenimiento</Btn>
     </div>
-    <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
-      {['Todos','En proceso','Completado','Pendiente','Cancelado'].map(e=><button key={e} onClick={()=>setFilterEstado(e)} style={{padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:500,border:filterEstado===e?'1.5px solid #378ADD':'0.5px solid var(--border)',background:filterEstado===e?'#E6F1FB':'transparent',color:filterEstado===e?'#185FA5':'var(--text2)'}}>{e}</button>)}
+
+    {/* Filtro por estado */}
+    <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+      {['Todos','En proceso','Completado','Pendiente','Cancelado'].map(e=>(
+        <button key={e} onClick={()=>setFilterEstado(e)} style={{padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:500,border:filterEstado===e?'1.5px solid #378ADD':'0.5px solid var(--border)',background:filterEstado===e?'#E6F1FB':'transparent',color:filterEstado===e?'#185FA5':'var(--text2)'}}>{e}</button>
+      ))}
     </div>
-    {loading?<Spinner/>:rows.length===0?<EmptyState msg="Sin mantenimientos. Registra el primero."/>:
+
+    {/* Filtros avanzados */}
+    <div style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:10,padding:'12px 14px',marginBottom:14,display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
+      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+        <label style={{fontSize:11,color:'var(--text3)'}}>Campo</label>
+        <select value={filterCampo} onChange={e=>setFilterCampo(e.target.value)} style={{width:'auto',padding:'6px 10px',fontSize:12}}>
+          <option>Todos</option>{CAMPOS.map(c=><option key={c}>{c}</option>)}
+        </select>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+        <label style={{fontSize:11,color:'var(--text3)'}}>Tractor</label>
+        <select value={filterTractor} onChange={e=>setFilterTractor(e.target.value)} style={{width:'auto',padding:'6px 10px',fontSize:12}}>
+          <option>Todos</option>{ids.map(t=><option key={t}>{t}</option>)}
+        </select>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+        <label style={{fontSize:11,color:'var(--text3)'}}>Tipo</label>
+        <select value={filterTipo} onChange={e=>setFilterTipo(e.target.value)} style={{width:'auto',padding:'6px 10px',fontSize:12}}>
+          <option>Todos</option>{TIPOS_MTTO.map(t=><option key={t}>{t}</option>)}
+        </select>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+        <label style={{fontSize:11,color:'var(--text3)'}}>Desde</label>
+        <input type="date" value={filterDesde} onChange={e=>setFilterDesde(e.target.value)} style={{width:'auto',padding:'6px 10px',fontSize:12}}/>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+        <label style={{fontSize:11,color:'var(--text3)'}}>Hasta</label>
+        <input type="date" value={filterHasta} onChange={e=>setFilterHasta(e.target.value)} style={{width:'auto',padding:'6px 10px',fontSize:12}}/>
+      </div>
+      {hayFiltros&&<button onClick={limpiarFiltros} style={{alignSelf:'flex-end',padding:'6px 12px',borderRadius:6,border:'0.5px solid var(--border2)',background:'none',fontSize:12,cursor:'pointer',color:'var(--text2)'}}>✕ Limpiar</button>}
+    </div>
+    {loading?<Spinner/>:rows.length===0?<EmptyState msg="Sin mantenimientos con los filtros seleccionados."/>:
     <div style={{display:'flex',flexDirection:'column',gap:12}}>
-      {rows.map(m=><div key={m.id} style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:12,padding:'14px 16px'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:8}}>
-          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-            <span style={{fontSize:16,fontWeight:700}}>{m.tractor_id}</span>
-            <Badge color={tipoColor[m.tipo]||'gray'}>{m.tipo}</Badge>
-            <Badge color={estadoColor[m.estado]||'gray'}>{m.estado}</Badge>
+      {rows.map(m=>{
+        const tractor=tractorMap[m.tractor_id]
+        return <div key={m.id} style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:12,padding:'14px 16px'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:8}}>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              <span style={{fontSize:16,fontWeight:700}}>{m.tractor_id}</span>
+              {tractor?.campo&&<Badge color="gray">{tractor.campo}</Badge>}
+              <Badge color={tipoColor[m.tipo]||'gray'}>{m.tipo}</Badge>
+              <Badge color={estadoColor[m.estado]||'gray'}>{m.estado}</Badge>
+            </div>
+            <div style={{display:'flex',gap:6,alignItems:'center'}}>
+              <span style={{fontSize:12,color:'var(--text3)'}}>{m.fecha}</span>
+              <button onClick={()=>openEdit(m)} style={{background:'none',border:'0.5px solid var(--border)',borderRadius:6,color:'#378ADD',cursor:'pointer',fontSize:12,padding:'3px 8px',fontWeight:500}}>✏️ Editar</button>
+              <button onClick={()=>handleDelete(m.id)} style={{background:'none',border:'none',color:'var(--text3)',cursor:'pointer',fontSize:16}}>🗑</button>
+            </div>
           </div>
-          <div style={{display:'flex',gap:6,alignItems:'center'}}>
-            <span style={{fontSize:12,color:'var(--text3)'}}>{m.fecha}</span>
-            <button onClick={()=>openEdit(m)} style={{background:'none',border:'0.5px solid var(--border)',borderRadius:6,color:'#378ADD',cursor:'pointer',fontSize:12,padding:'3px 8px',fontWeight:500}}>✏️ Editar</button>
-            <button onClick={()=>handleDelete(m.id)} style={{background:'none',border:'none',color:'var(--text3)',cursor:'pointer',fontSize:16}}>🗑</button>
-          </div>
-        </div>
         <p style={{margin:'0 0 6px',fontSize:14,fontWeight:500}}>{m.descripcion}</p>
         {m.observaciones&&<p style={{margin:'0 0 8px',fontSize:13,color:'var(--text2)'}}>{m.observaciones}</p>}
         <div style={{display:'flex',gap:16,fontSize:13,color:'var(--text2)',flexWrap:'wrap'}}>
@@ -628,7 +691,8 @@ function Mantenimientos({mtto,setMtto,tractores,loading}){
         {m.fotos?.length>0&&<div style={{display:'flex',gap:8,marginTop:10,flexWrap:'wrap'}}>
           {m.fotos.map((url,i)=><img key={i} src={url} alt="" style={{width:80,height:60,objectFit:'cover',borderRadius:6,border:'0.5px solid var(--border)'}}/>)}
         </div>}
-      </div>)}
+        </div>
+      })}
     </div>}
     {showForm&&<Modal title={editId?'Editar mantenimiento':'Nuevo mantenimiento'} onClose={()=>setShowForm(false)} wide>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
