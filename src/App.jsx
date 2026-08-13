@@ -394,27 +394,23 @@ function ReporteDiesel({diesel,tractores}){
 }
 
 /* ── Diesel ── */
-function Diesel({diesel,setDiesel,tractores,presupuestos,loading}){
+function Diesel({diesel,setDiesel,tractores,presupuestos,qrTractorId,loading}){
   const [showForm,setShowForm]=useState(false)
   const [saving,setSaving]=useState(false)
   const [filterCampo,setFilterCampo]=useState('Todos')
   const [filterTractor,setFilterTractor]=useState('Todos')
   const [form,setForm]=useState({fecha:new Date().toISOString().split('T')[0],tractor_id:'',campo:'',actividad:'',litros:'',horas:'',hectareas:'',operador:'',semana:'',turno:'DIA'})
 
-  // Auto-open form with tractor preselected when coming from QR scan (?tractor=ID&accion=diesel)
+  // Open form preselected when coming from QR scan
   useEffect(()=>{
-    const params=new URLSearchParams(window.location.search)
-    const tractorId=params.get('tractor')
-    const accion=params.get('accion')
-    if(tractorId&&accion==='diesel'&&tractores.length>0){
-      const t=tractores.find(x=>x.id===tractorId)
+    if(qrTractorId&&tractores.length>0){
+      const t=tractores.find(x=>x.id===qrTractorId)
       if(t){
         setForm(f=>({...f,tractor_id:t.id,campo:t.campo||'',operador:t.operador||''}))
         setShowForm(true)
-        window.history.replaceState({},'',window.location.pathname)
       }
     }
-  },[tractores])
+  },[qrTractorId,tractores])
 
   // Presupuesto check
   const alertaPresupuesto=useMemo(()=>{
@@ -1220,6 +1216,19 @@ function Flotilla({tractores,setTractores,diesel,mtto,autorizaciones,loading}){
 /* ── App Root ── */
 export default function App(){
   const [page,setPage]=useState('dashboard')
+  const [qrTractorId,setQrTractorId]=useState(null)
+
+  // Read QR params on load and redirect to correct page
+  useEffect(()=>{
+    const params=new URLSearchParams(window.location.search)
+    const tractorId=params.get('tractor')
+    const accion=params.get('accion')
+    if(tractorId&&accion==='diesel'){
+      setQrTractorId(tractorId)
+      setPage('diesel')
+      window.history.replaceState({},'',window.location.pathname)
+    }
+  },[])
   const [tractores,setTractores]=useState([])
   const [diesel,setDiesel]=useState([])
   const [mtto,setMtto]=useState([])
@@ -1274,7 +1283,7 @@ export default function App(){
       </div>
       <div style={{maxWidth:1200,margin:'0 auto',padding:'24px 20px'}}>
         {page==='dashboard'      && <Dashboard diesel={diesel} tractores={tractores} mtto={mtto}/>}
-        {page==='diesel'         && <Diesel diesel={diesel} setDiesel={setDiesel} tractores={tractores} presupuestos={presupuestos} loading={loading}/>}
+        {page==='diesel'         && <Diesel diesel={diesel} setDiesel={setDiesel} tractores={tractores} presupuestos={presupuestos} qrTractorId={qrTractorId} loading={loading}/>}
         {page==='presupuesto'    && <Presupuesto tractores={tractores} diesel={diesel} presupuestos={presupuestos} setPresupuestos={setPresupuestos} loading={loading}/>}
         {page==='reporte'        && <ReporteDiesel diesel={diesel} tractores={tractores}/>}
         {page==='mtto'           && <Mantenimientos mtto={mtto} setMtto={setMtto} tractores={tractores} loading={loading}/>}
