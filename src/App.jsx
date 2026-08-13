@@ -10,14 +10,15 @@ const CAMPO_COLORS = {MJ1:'#1D9E75',MJ3:'#378ADD',MJ4:'#D85A30',MJ5:'#534AB7',MJ
 const ESTADOS_AUTORIZACION = ['Pendiente','Autorizado','Rechazado']
 
 const NAV = [
-  {id:'dashboard', label:'Dashboard', emoji:'📊'},
-  {id:'diesel',    label:'Diesel',    emoji:'⛽'},
-  {id:'presupuesto', label:'Presupuesto', emoji:'📋'},
-  {id:'reporte',   label:'Reporte',   emoji:'📑'},
-  {id:'mtto',      label:'Mantenimientos', emoji:'🔧'},
-  {id:'autorizaciones', label:'Autorizaciones', emoji:'📋'},
-  {id:'analisis',  label:'Análisis',  emoji:'📈'},
-  {id:'flotilla',  label:'Flotilla',  emoji:'🚜'},
+  {id:'dashboard',    label:'Dashboard',       emoji:'📊'},
+  {id:'diesel',       label:'Diesel',          emoji:'⛽'},
+  {id:'presupuesto',  label:'Presupuesto',     emoji:'📋'},
+  {id:'reporte',      label:'Reporte',         emoji:'📑'},
+  {id:'mtto',         label:'Mantenimientos',  emoji:'🔧'},
+  {id:'autorizaciones',label:'Autorizaciones', emoji:'📋'},
+  {id:'analisis',     label:'Análisis',        emoji:'📈'},
+  {id:'flotilla',     label:'Flotilla',        emoji:'🚜'},
+  {id:'qrcodes',      label:'Códigos QR',      emoji:'🔲'},
 ]
 
 /* ── Upload helper ── */
@@ -399,6 +400,21 @@ function Diesel({diesel,setDiesel,tractores,presupuestos,loading}){
   const [filterCampo,setFilterCampo]=useState('Todos')
   const [filterTractor,setFilterTractor]=useState('Todos')
   const [form,setForm]=useState({fecha:new Date().toISOString().split('T')[0],tractor_id:'',campo:'',actividad:'',litros:'',horas:'',hectareas:'',operador:'',semana:'',turno:'DIA'})
+
+  // Auto-open form with tractor preselected when coming from QR scan (?tractor=ID&accion=diesel)
+  useEffect(()=>{
+    const params=new URLSearchParams(window.location.search)
+    const tractorId=params.get('tractor')
+    const accion=params.get('accion')
+    if(tractorId&&accion==='diesel'&&tractores.length>0){
+      const t=tractores.find(x=>x.id===tractorId)
+      if(t){
+        setForm(f=>({...f,tractor_id:t.id,campo:t.campo||'',operador:t.operador||''}))
+        setShowForm(true)
+        window.history.replaceState({},'',window.location.pathname)
+      }
+    }
+  },[tractores])
 
   // Presupuesto check
   const alertaPresupuesto=useMemo(()=>{
@@ -900,11 +916,231 @@ function Autorizaciones({autorizaciones,setAutorizaciones,tractores,loading}){
   </div>
 }
 
+/* ── Ficha de tractor (historial completo) ── */
+function FichaTractor({tractor, diesel, mtto, autorizaciones, onClose}){
+  const [tab,setTab]=useState('diesel')
+  const tDiesel=diesel.filter(r=>r.tractor_id===tractor.id).sort((a,b)=>b.fecha?.localeCompare(a.fecha))
+  const tMtto=mtto.filter(m=>m.tractor_id===tractor.id).sort((a,b)=>b.fecha?.localeCompare(a.fecha))
+  const tAuth=autorizaciones.filter(a=>a.tractor_id===tractor.id).sort((a,b)=>b.fecha?.localeCompare(a.fecha))
+  const totalLts=tDiesel.reduce((s,r)=>s+Number(r.litros||0),0)
+  const totalHrs=tDiesel.reduce((s,r)=>s+Number(r.horas||0),0)
+  const totalHas=tDiesel.reduce((s,r)=>s+Number(r.hectareas||0),0)
+  const totalMtto=tMtto.reduce((s,m)=>s+(+m.mano_obra||0)+(+m.refacciones||0),0)
+  const totalMO=tMtto.reduce((s,m)=>s+(+m.mano_obra||0),0)
+  const totalRef=tMtto.reduce((s,m)=>s+(+m.refacciones||0),0)
+  const lts_hr=totalHrs>0?(totalLts/totalHrs).toFixed(2):'-'
+  const lts_ha=totalHas>0?(totalLts/totalHas).toFixed(2):'-'
+  const eColor={Completado:'success','En proceso':'warning',Pendiente:'info',Cancelado:'danger'}
+  const tColor={Preventivo:'info',Correctivo:'warning',Emergencia:'danger'}
+  const exportCSV=()=>{
+    const rows=[
+      ['DIESEL'],
+      ['Fecha','Actividad','Litros','Horas','Hectáreas','Lts/Hr','Lts/Ha','Operador','Turno'],
+      ...tDiesel.map(r=>[r.fecha,r.actividad,r.litros||0,r.horas||0,r.hectareas||0,r.horas>0?(r.litros/r.horas).toFixed(1):'',r.hectareas>0?(r.litros/r.hectareas).toFixed(1):'',r.operador||'',r.turno||'']),
+      [],[`Total lts: ${totalLts}`,`Total hrs: ${totalHrs.toFixed(1)}`,`Lts/hr: ${lts_hr}`,`Lts/ha: ${lts_ha}`],
+      [],['MANTENIMIENTOS'],
+      ['Fecha','Tipo','Descripción','Mano de obra','Refacciones','Total','Técnico','Estado'],
+      ...tMtto.map(m=>[m.fecha,m.tipo,`"${m.descripcion}"`,m.mano_obra||0,m.refacciones||0,(+m.mano_obra||0)+(+m.refacciones||0),m.tecnico||'',m.estado]),
+      [],[`Total mantenimientos: $${totalMtto.toLocaleString()}`],
+    ]
+    const csv=rows.map(r=>r.join(',')).join('\n')
+    const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'})
+    const url=URL.createObjectURL(blob)
+    const a=document.createElement('a');a.href=url;a.download=`historial_${tractor.id}_${new Date().toISOString().split('T')[0]}.csv`;a.click()
+    URL.revokeObjectURL(url)
+  }
+  return <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.55)',zIndex:1000,overflowY:'auto',padding:'20px 12px'}}>
+    <div style={{maxWidth:960,margin:'0 auto',background:'var(--bg2)',borderRadius:14,overflow:'hidden',boxShadow:'0 8px 40px rgba(0,0,0,0.22)'}}>
+      {/* Header */}
+      <div style={{background:'var(--bg)',padding:'20px 24px',borderBottom:'0.5px solid var(--border)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:12}}>
+          <div>
+            <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:4}}>
+              <h2 style={{fontSize:20,fontWeight:700,margin:0}}>{tractor.id}</h2>
+              <Badge color={tractor.activo?'success':'gray'}>{tractor.activo?'Activo':'Inactivo'}</Badge>
+            </div>
+            <p style={{margin:'0 0 2px',fontSize:13,color:'var(--text2)'}}>
+              {tractor.marca&&`${tractor.marca} ${tractor.modelo||''}`}{tractor.año&&` · ${tractor.año}`}
+              {tractor.campo&&` · Campo ${tractor.campo}`}
+              {tractor.operador&&` · 👤 ${tractor.operador}`}
+            </p>
+          </div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            <button onClick={()=>window.print()} style={{padding:'8px 16px',borderRadius:8,background:'#378ADD',color:'#fff',border:'none',fontSize:13,fontWeight:500,cursor:'pointer'}}>🖨️ Imprimir</button>
+            <button onClick={exportCSV} style={{padding:'8px 16px',borderRadius:8,background:'#1D9E75',color:'#fff',border:'none',fontSize:13,fontWeight:500,cursor:'pointer'}}>📥 Exportar CSV</button>
+            <button onClick={onClose} style={{padding:'8px 16px',borderRadius:8,background:'none',border:'0.5px solid var(--border2)',fontSize:13,cursor:'pointer',color:'var(--text2)'}}>✕ Cerrar</button>
+          </div>
+        </div>
+        {/* Totalizador */}
+        <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
+          <div style={{background:'#E1F5EE',borderRadius:8,padding:'10px 16px',flex:1,minWidth:120,textAlign:'center'}}>
+            <p style={{fontSize:11,color:'#0F6E56',margin:'0 0 2px',fontWeight:500}}>Total diesel</p>
+            <p style={{fontSize:18,fontWeight:700,color:'#1D9E75',margin:0}}>{totalLts.toLocaleString()} lts</p>
+            <p style={{fontSize:10,color:'#1D9E75',margin:0}}>{tDiesel.length} registros</p>
+          </div>
+          <div style={{background:'#E6F1FB',borderRadius:8,padding:'10px 16px',flex:1,minWidth:120,textAlign:'center'}}>
+            <p style={{fontSize:11,color:'#185FA5',margin:'0 0 2px',fontWeight:500}}>Rendimiento</p>
+            <p style={{fontSize:18,fontWeight:700,color:'#378ADD',margin:0}}>{lts_hr} lts/hr</p>
+            <p style={{fontSize:10,color:'#378ADD',margin:0}}>{lts_ha} lts/ha</p>
+          </div>
+          <div style={{background:'#FAEEDA',borderRadius:8,padding:'10px 16px',flex:1,minWidth:120,textAlign:'center'}}>
+            <p style={{fontSize:11,color:'#854F0B',margin:'0 0 2px',fontWeight:500}}>Mantenimientos</p>
+            <p style={{fontSize:18,fontWeight:700,color:'#BA7517',margin:0}}>${totalMtto.toLocaleString()}</p>
+            <p style={{fontSize:10,color:'#BA7517',margin:0}}>{tMtto.length} registros</p>
+          </div>
+          <div style={{background:'#EEEDFE',borderRadius:8,padding:'10px 16px',flex:1,minWidth:120,textAlign:'center'}}>
+            <p style={{fontSize:11,color:'#3C3489',margin:'0 0 2px',fontWeight:500}}>Horas trabajadas</p>
+            <p style={{fontSize:18,fontWeight:700,color:'#534AB7',margin:0}}>{totalHrs.toFixed(0)} hrs</p>
+            <p style={{fontSize:10,color:'#534AB7',margin:0}}>{totalHas.toFixed(1)} ha</p>
+          </div>
+        </div>
+        {tMtto.length>0&&<div style={{display:'flex',gap:16,marginTop:10,fontSize:12,color:'var(--text2)'}}>
+          <span>Mano de obra: <strong style={{color:'#1D9E75'}}>${totalMO.toLocaleString()}</strong></span>
+          <span>Refacciones: <strong style={{color:'#D85A30'}}>${totalRef.toLocaleString()}</strong></span>
+        </div>}
+      </div>
+      {/* Tabs */}
+      <div style={{background:'var(--bg)',borderBottom:'0.5px solid var(--border)',display:'flex'}}>
+        {[
+          {id:'diesel',label:`⛽ Diesel (${tDiesel.length})`},
+          {id:'mtto',label:`🔧 Mantenimientos (${tMtto.length})`},
+          {id:'auth',label:`📋 Autorizaciones (${tAuth.length})`},
+        ].map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{padding:'11px 18px',background:'none',border:'none',borderBottom:tab===t.id?'2px solid #1D9E75':'2px solid transparent',color:tab===t.id?'#0F6E56':'var(--text2)',fontWeight:tab===t.id?600:400,fontSize:13,cursor:'pointer'}}>{t.label}</button>)}
+      </div>
+      {/* Content */}
+      <div style={{padding:'20px 24px'}}>
+        {/* DIESEL */}
+        {tab==='diesel'&&(tDiesel.length===0?<EmptyState msg="Sin registros de diesel."/>:
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+              <thead><tr style={{borderBottom:'0.5px solid var(--border)',background:'var(--bg2)'}}>
+                {['Fecha','Actividad','Litros','Horas','Hect.','Lts/Hr','Lts/Ha','Operador','Turno'].map(h=><th key={h} style={{padding:'7px 10px',textAlign:'left',fontWeight:500,color:'var(--text2)',whiteSpace:'nowrap'}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {tDiesel.map(r=>{
+                  const lhr=r.horas>0?(r.litros/r.horas).toFixed(1):'-'
+                  const lha=r.hectareas>0?(r.litros/r.hectareas).toFixed(1):'-'
+                  return <tr key={r.id} style={{borderBottom:'0.5px solid var(--border)'}}>
+                    <td style={{padding:'7px 10px',whiteSpace:'nowrap'}}>{r.fecha}</td>
+                    <td style={{padding:'7px 10px'}}>{r.actividad}</td>
+                    <td style={{padding:'7px 10px',fontWeight:600,color:'#1D9E75'}}>{r.litros} lts</td>
+                    <td style={{padding:'7px 10px'}}>{r.horas||'-'}</td>
+                    <td style={{padding:'7px 10px'}}>{r.hectareas||'-'}</td>
+                    <td style={{padding:'7px 10px',color:'#378ADD',fontWeight:500}}>{lhr}</td>
+                    <td style={{padding:'7px 10px',color:'#534AB7',fontWeight:500}}>{lha}</td>
+                    <td style={{padding:'7px 10px',color:'var(--text2)'}}>{r.operador||'-'}</td>
+                    <td style={{padding:'7px 10px'}}>{r.turno||'-'}</td>
+                  </tr>
+                })}
+                <tr style={{borderTop:'1.5px solid var(--border)',background:'var(--bg2)'}}>
+                  <td colSpan={2} style={{padding:'7px 10px',fontWeight:600,fontSize:12}}>TOTALES</td>
+                  <td style={{padding:'7px 10px',fontWeight:700,color:'#1D9E75'}}>{totalLts} lts</td>
+                  <td style={{padding:'7px 10px',fontWeight:700,color:'#378ADD'}}>{totalHrs.toFixed(1)} hrs</td>
+                  <td style={{padding:'7px 10px',fontWeight:700,color:'#534AB7'}}>{totalHas.toFixed(1)} ha</td>
+                  <td style={{padding:'7px 10px',fontWeight:700,color:'#378ADD'}}>{lts_hr}</td>
+                  <td style={{padding:'7px 10px',fontWeight:700,color:'#534AB7'}}>{lts_ha}</td>
+                  <td colSpan={2}></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+        {/* MANTENIMIENTOS */}
+        {tab==='mtto'&&(tMtto.length===0?<EmptyState msg="Sin mantenimientos registrados."/>:
+          <div style={{display:'flex',flexDirection:'column',gap:10}}>
+            {tMtto.map(m=><div key={m.id} style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6,flexWrap:'wrap',gap:6}}>
+                <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                  <Badge color={tColor[m.tipo]||'gray'}>{m.tipo}</Badge>
+                  <Badge color={eColor[m.estado]||'gray'}>{m.estado}</Badge>
+                  <span style={{fontSize:12,color:'var(--text3)'}}>{m.fecha}</span>
+                </div>
+                <strong style={{color:'#378ADD',fontSize:14}}>${((+m.mano_obra||0)+(+m.refacciones||0)).toLocaleString()}</strong>
+              </div>
+              <p style={{margin:'0 0 4px',fontSize:13,fontWeight:500}}>{m.descripcion}</p>
+              {m.observaciones&&<p style={{margin:'0 0 6px',fontSize:12,color:'var(--text2)'}}>{m.observaciones}</p>}
+              <div style={{display:'flex',gap:14,fontSize:12,color:'var(--text2)',flexWrap:'wrap'}}>
+                {m.tecnico&&<span>🔧 {m.tecnico}</span>}
+                <span>💵 M.O.: <strong style={{color:'#1D9E75'}}>${Number(m.mano_obra||0).toLocaleString()}</strong></span>
+                <span>🔩 Ref.: <strong style={{color:'#D85A30'}}>${Number(m.refacciones||0).toLocaleString()}</strong></span>
+              </div>
+              {m.fotos?.length>0&&<div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
+                {m.fotos.map((url,i)=><img key={i} src={url} alt="" style={{width:64,height:50,objectFit:'cover',borderRadius:5,border:'0.5px solid var(--border)'}}/>)}
+              </div>}
+            </div>)}
+            <div style={{background:'var(--bg2)',borderRadius:8,padding:'10px 14px',fontSize:13}}>
+              Total mantenimientos: <strong style={{color:'#1D9E75'}}>${totalMtto.toLocaleString()}</strong>
+              <span style={{margin:'0 12px',color:'var(--text3)'}}>·</span>
+              M.O.: <strong>${totalMO.toLocaleString()}</strong>
+              <span style={{margin:'0 12px',color:'var(--text3)'}}>·</span>
+              Refacciones: <strong>${totalRef.toLocaleString()}</strong>
+            </div>
+          </div>
+        )}
+        {/* AUTORIZACIONES */}
+        {tab==='auth'&&(tAuth.length===0?<EmptyState msg="Sin solicitudes de autorización."/>:
+          <div style={{display:'flex',flexDirection:'column',gap:10}}>
+            {tAuth.map(a=><div key={a.id} style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:6,flexWrap:'wrap',gap:6}}>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  <Badge color={{Pendiente:'warning',Autorizado:'success',Rechazado:'danger'}[a.estado]||'gray'}>{a.estado}</Badge>
+                  <span style={{fontSize:12,color:'var(--text3)'}}>{a.fecha} · Folio #{a.id}</span>
+                </div>
+                <strong style={{color:'#534AB7'}}>${Number(a.costo_estimado||0).toLocaleString()}</strong>
+              </div>
+              <p style={{margin:'0 0 4px',fontSize:13,fontWeight:500}}>{a.descripcion}</p>
+              <div style={{fontSize:12,color:'var(--text2)'}}>🏭 {a.proveedor}{a.solicitante&&` · 👤 ${a.solicitante}`}</div>
+              {a.comentarios_contraloria&&<p style={{margin:'6px 0 0',fontSize:12,color:'var(--text2)',fontStyle:'italic'}}>"{a.comentarios_contraloria}" — {a.autorizado_por}</p>}
+            </div>)}
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+}
+
+/* ── Códigos QR para tractores ── */
+function QRCodes({tractores}){
+  const [filterCampo,setFilterCampo]=useState('Todos')
+  const BASE_URL=window.location.origin
+  const rows=tractores.filter(t=>filterCampo==='Todos'||t.campo===filterCampo)
+  return <div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+      <div>
+        <h2 style={{fontSize:18,fontWeight:600,margin:'0 0 2px'}}>Códigos QR — Tractores</h2>
+        <p style={{fontSize:12,color:'var(--text3)',margin:0}}>Escanea para abrir el registro de diesel con el tractor preseleccionado</p>
+      </div>
+      <button onClick={()=>window.print()} style={{padding:'8px 18px',borderRadius:8,background:'#378ADD',color:'#fff',border:'none',fontSize:13,fontWeight:500,cursor:'pointer'}}>🖨️ Imprimir todos</button>
+    </div>
+    <div style={{display:'flex',gap:10,marginBottom:16}}>
+      <select value={filterCampo} onChange={e=>setFilterCampo(e.target.value)} style={{width:'auto',padding:'7px 12px'}}>
+        <option>Todos</option>{CAMPOS.map(c=><option key={c}>{c}</option>)}
+      </select>
+      <span style={{fontSize:12,color:'var(--text3)',alignSelf:'center'}}>{rows.length} tractores</span>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(170px,1fr))',gap:16}}>
+      {rows.map(t=>{
+        const qrUrl=`${BASE_URL}?tractor=${t.id}&accion=diesel`
+        const imgUrl=`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(qrUrl)}&margin=4`
+        return <div key={t.id} style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:10,padding:16,textAlign:'center',pageBreakInside:'avoid'}}>
+          <img src={imgUrl} alt={`QR ${t.id}`} width={140} height={140} style={{borderRadius:6,display:'block',margin:'0 auto'}}/>
+          <div style={{marginTop:10}}>
+            <p style={{fontWeight:700,fontSize:16,margin:'0 0 2px'}}>{t.id}</p>
+            {t.marca&&<p style={{fontSize:11,color:'var(--text2)',margin:'0 0 2px'}}>{t.marca} {t.modelo}</p>}
+            <p style={{fontSize:10,color:'var(--text3)',margin:0}}>{t.campo}</p>
+          </div>
+        </div>
+      })}
+    </div>
+  </div>
+}
+
 /* ── Flotilla ── */
-function Flotilla({tractores,setTractores,loading}){
+function Flotilla({tractores,setTractores,diesel,mtto,autorizaciones,loading}){
   const [showForm,setShowForm]=useState(false)
   const [saving,setSaving]=useState(false)
   const [form,setForm]=useState({id:'',campo:'MJ1',operador:'',marca:'',modelo:'',año:'',horometro:'',activo:true})
+  const [fichaTractor,setFichaTractor]=useState(null)
   const handleSubmit=async()=>{
     if(!form.id){alert('El número económico es obligatorio');return}
     setSaving(true)
@@ -932,18 +1168,32 @@ function Flotilla({tractores,setTractores,loading}){
       {CAMPOS.filter(c=>byCampo[c]?.length>0).map(campo=><div key={campo}>
         <p style={{fontSize:13,fontWeight:600,color:CAMPO_COLORS[campo]||'#888',marginBottom:10}}>{campo} <span style={{fontWeight:400,color:'var(--text3)',fontSize:12}}>({byCampo[campo].length} tractores)</span></p>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:10}}>
-          {byCampo[campo].map(t=><div key={t.id} style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:10,padding:'12px 14px',opacity:t.activo?1:0.55}}>
-            <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
-              <span style={{fontSize:16,fontWeight:700}}>{t.id}</span>
-              <Badge color={t.activo?'success':'gray'}>{t.activo?'Activo':'Inactivo'}</Badge>
+          {byCampo[campo].map(t=>{
+            const tMttoCount=mtto.filter(m=>m.tractor_id===t.id).length
+            const tCostMtto=mtto.filter(m=>m.tractor_id===t.id).reduce((s,m)=>s+(+m.mano_obra||0)+(+m.refacciones||0),0)
+            const tLts=diesel.filter(r=>r.tractor_id===t.id).reduce((s,r)=>s+Number(r.litros||0),0)
+            return <div key={t.id}
+              onClick={()=>setFichaTractor(t)}
+              style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:10,padding:'12px 14px',opacity:t.activo?1:0.65,cursor:'pointer',transition:'box-shadow 0.15s,border-color 0.15s'}}
+              onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 4px 16px rgba(0,0,0,0.10)';e.currentTarget.style.borderColor='#1D9E75'}}
+              onMouseLeave={e=>{e.currentTarget.style.boxShadow='none';e.currentTarget.style.borderColor='rgba(0,0,0,0.1)'}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+                <span style={{fontSize:16,fontWeight:700}}>{t.id}</span>
+                <Badge color={t.activo?'success':'gray'}>{t.activo?'Activo':'Inactivo'}</Badge>
+              </div>
+              {t.marca&&<p style={{margin:'0 0 2px',fontSize:12,color:'var(--text2)'}}>{t.marca} {t.modelo} {t.año&&`(${t.año})`}</p>}
+              {t.operador&&<p style={{margin:'0 0 6px',fontSize:11,color:'var(--text3)'}}>👤 {t.operador}</p>}
+              {tLts>0&&<div style={{marginBottom:6,padding:'3px 8px',background:'#E1F5EE',borderRadius:6,fontSize:11,color:'#0F6E56'}}>⛽ {tLts.toLocaleString()} lts registrados</div>}
+              {tMttoCount>0&&<div style={{marginBottom:8,padding:'3px 8px',background:'#EAF3FB',borderRadius:6,fontSize:11,color:'#185FA5'}}>🔧 {tMttoCount} mtto{tMttoCount!==1?'s':''} · <strong>${tCostMtto.toLocaleString()}</strong></div>}
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:11,color:'#1D9E75',fontWeight:500}}>Ver historial →</span>
+                <div style={{display:'flex',gap:4}} onClick={e=>e.stopPropagation()}>
+                  <button onClick={()=>toggleActivo(t.id,t.activo)} style={{fontSize:10,padding:'2px 6px',borderRadius:5,border:'0.5px solid var(--border2)',background:'none',cursor:'pointer',color:'var(--text2)'}}>{t.activo?'Desactivar':'Activar'}</button>
+                  <button onClick={()=>handleDelete(t.id)} style={{fontSize:10,padding:'2px 6px',borderRadius:5,border:'0.5px solid var(--border2)',background:'none',cursor:'pointer',color:'#A32D2D'}}>Eliminar</button>
+                </div>
+              </div>
             </div>
-            {t.marca&&<p style={{margin:'0 0 2px',fontSize:12,color:'var(--text2)'}}>{t.marca} {t.modelo} {t.año&&`(${t.año})`}</p>}
-            {t.operador&&<p style={{margin:'0 0 8px',fontSize:12,color:'var(--text3)'}}>{t.operador}</p>}
-            <div style={{display:'flex',gap:6}}>
-              <button onClick={()=>toggleActivo(t.id,t.activo)} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'0.5px solid var(--border2)',background:'none',cursor:'pointer',color:'var(--text2)'}}>{t.activo?'Desactivar':'Activar'}</button>
-              <button onClick={()=>handleDelete(t.id)} style={{fontSize:11,padding:'3px 8px',borderRadius:6,border:'0.5px solid var(--border2)',background:'none',cursor:'pointer',color:'#A32D2D'}}>Eliminar</button>
-            </div>
-          </div>)}
+          })}
         </div>
       </div>)}
       {tractores.length===0&&<EmptyState msg="Sin tractores registrados. Agrega el primero."/>}
@@ -963,6 +1213,7 @@ function Flotilla({tractores,setTractores,loading}){
         <Btn color="#534AB7" onClick={handleSubmit} disabled={saving}>{saving?'Guardando...':'Agregar tractor'}</Btn>
       </div>
     </Modal>}
+    {fichaTractor&&<FichaTractor tractor={fichaTractor} diesel={diesel} mtto={mtto} autorizaciones={autorizaciones} onClose={()=>setFichaTractor(null)}/>}
   </div>
 }
 
@@ -1029,7 +1280,8 @@ export default function App(){
         {page==='mtto'           && <Mantenimientos mtto={mtto} setMtto={setMtto} tractores={tractores} loading={loading}/>}
         {page==='autorizaciones' && <Autorizaciones autorizaciones={autorizaciones} setAutorizaciones={setAutorizaciones} tractores={tractores} loading={loading}/>}
         {page==='analisis'       && <Analisis diesel={diesel} tractores={tractores} mtto={mtto}/>}
-        {page==='flotilla'       && <Flotilla tractores={tractores} setTractores={setTractores} loading={loading}/>}
+        {page==='flotilla'       && <Flotilla tractores={tractores} setTractores={setTractores} diesel={diesel} mtto={mtto} autorizaciones={autorizaciones} loading={loading}/>}
+        {page==='qrcodes'        && <QRCodes tractores={tractores}/>}
       </div>
     </div>
   )
