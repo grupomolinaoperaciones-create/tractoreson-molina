@@ -14,12 +14,17 @@ const NAV = [
   {id:'diesel',       label:'Diesel',          emoji:'⛽'},
   {id:'presupuesto',  label:'Presupuesto',     emoji:'📋'},
   {id:'reporte',      label:'Reporte',         emoji:'📑'},
+  {id:'actividades',  label:'Actividades',     emoji:'📝'},
   {id:'mtto',         label:'Mantenimientos',  emoji:'🔧'},
   {id:'autorizaciones',label:'Autorizaciones', emoji:'📋'},
   {id:'analisis',     label:'Análisis',        emoji:'📈'},
   {id:'flotilla',     label:'Flotilla',        emoji:'🚜'},
   {id:'qrcodes',      label:'Códigos QR',      emoji:'🔲'},
 ]
+
+const CULTIVOS = ['Uva','Hortaliza','Pepino','Tomate','Otro']
+const ACTIVIDADES_CAMPO = ['Aplicación','Rastrillo','Tablón','Batanga Agua','Rastra','Cortaguía','Tera Cinta','Tera Plástico','Subsuelo','Fumigación','Remolque','Otro']
+const TURNOS = ['DIA','NOCHE']
 
 /* ── Upload helper ── */
 async function uploadFotos(files){
@@ -1159,6 +1164,263 @@ function FichaTractor({tractor, diesel, mtto, autorizaciones, onClose}){
   </div>
 }
 
+/* ── Actividades diarias (Reporte de Maquinaria) ── */
+function Actividades({actividades,setActividades,tractores,loading}){
+  const [showForm,setShowForm]=useState(false)
+  const [saving,setSaving]=useState(false)
+  const [vista,setVista]=useState('registros') // registros | reporte
+  // Filtros
+  const [filterCampo,setFilterCampo]=useState('Todos')
+  const [filterTractor,setFilterTractor]=useState('Todos')
+  const [filterActividad,setFilterActividad]=useState('Todos')
+  const [filterCultivo,setFilterCultivo]=useState('Todos')
+  const [filterDesde,setFilterDesde]=useState('')
+  const [filterHasta,setFilterHasta]=useState('')
+  const [filterTurno,setFilterTurno]=useState('Todos')
+
+  const emptyForm={
+    fecha:new Date().toISOString().split('T')[0],
+    campo:'',tractor_id:'',actividad:'',
+    cultivo:'Uva',cuadro:'',malla:'',
+    operador:'',turno:'DIA',observaciones:''
+  }
+  const [form,setForm]=useState(emptyForm)
+
+  const handleSubmit=async()=>{
+    if(!form.campo||!form.tractor_id||!form.actividad||!form.operador){
+      alert('Campo, tractor, actividad y operador son obligatorios');return
+    }
+    setSaving(true)
+    const {data,error}=await supabase.from('actividades_diarias').insert([form]).select()
+    if(error){alert('Error: '+error.message)}
+    else{setActividades(a=>[data[0],...a]);setShowForm(false);setForm(emptyForm)}
+    setSaving(false)
+  }
+
+  const handleDelete=async(id)=>{
+    if(!confirm('¿Eliminar este registro?'))return
+    await supabase.from('actividades_diarias').delete().eq('id',id)
+    setActividades(a=>a.filter(x=>x.id!==id))
+  }
+
+  const ids=[...new Set(tractores.map(t=>t.id))].sort()
+
+  const rows=useMemo(()=>actividades.filter(r=>{
+    if(filterCampo!=='Todos'&&r.campo!==filterCampo) return false
+    if(filterTractor!=='Todos'&&r.tractor_id!==filterTractor) return false
+    if(filterActividad!=='Todos'&&r.actividad!==filterActividad) return false
+    if(filterCultivo!=='Todos'&&r.cultivo!==filterCultivo) return false
+    if(filterTurno!=='Todos'&&r.turno!==filterTurno) return false
+    if(filterDesde&&r.fecha<filterDesde) return false
+    if(filterHasta&&r.fecha>filterHasta) return false
+    return true
+  }),[actividades,filterCampo,filterTractor,filterActividad,filterCultivo,filterTurno,filterDesde,filterHasta])
+
+  const hayFiltros=filterCampo!=='Todos'||filterTractor!=='Todos'||filterActividad!=='Todos'||filterCultivo!=='Todos'||filterTurno!=='Todos'||filterDesde||filterHasta
+  const limpiar=()=>{setFilterCampo('Todos');setFilterTractor('Todos');setFilterActividad('Todos');setFilterCultivo('Todos');setFilterTurno('Todos');setFilterDesde('');setFilterHasta('')}
+
+  // Reporte agrupado por campo+fecha
+  const reporteAgrupado=useMemo(()=>{
+    const m={}
+    rows.forEach(r=>{
+      const k=`${r.campo}||${r.fecha}`
+      if(!m[k])m[k]={campo:r.campo,fecha:r.fecha,registros:[]}
+      m[k].registros.push(r)
+    })
+    return Object.values(m).sort((a,b)=>b.fecha.localeCompare(a.fecha)||a.campo.localeCompare(b.campo))
+  },[rows])
+
+  const exportCSV=()=>{
+    const header=['Fecha','Campo','Tractor','Actividad','Cultivo','Cuadro/Malla','Malla','Operador','Turno','Observaciones']
+    const data=rows.map(r=>[r.fecha,r.campo,r.tractor_id,r.actividad,r.cultivo,r.cuadro||'',r.malla||'',r.operador,r.turno,`"${r.observaciones||''}"`])
+    const csv=[[...header],...data].map(r=>r.join(',')).join('\n')
+    const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'})
+    const url=URL.createObjectURL(blob)
+    const a=document.createElement('a');a.href=url;a.download=`actividades_${new Date().toISOString().split('T')[0]}.csv`;a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const cultivoColor={Uva:'purple',Hortaliza:'success',Pepino:'info',Tomate:'danger',Otro:'gray'}
+
+  return <div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+      <div>
+        <h2 style={{fontSize:18,fontWeight:600,margin:'0 0 2px'}}>Actividades diarias</h2>
+        <p style={{fontSize:12,color:'var(--text3)',margin:0}}>{rows.length} registros</p>
+      </div>
+      <div style={{display:'flex',gap:8}}>
+        <button onClick={()=>window.print()} style={{padding:'7px 14px',borderRadius:8,background:'#378ADD',color:'#fff',border:'none',fontSize:12,cursor:'pointer',fontWeight:500}}>🖨️ Imprimir</button>
+        <button onClick={exportCSV} style={{padding:'7px 14px',borderRadius:8,background:'#1D9E75',color:'#fff',border:'none',fontSize:12,cursor:'pointer',fontWeight:500}}>📥 CSV</button>
+        <Btn onClick={()=>setShowForm(true)} color="#BA7517">+ Nuevo registro</Btn>
+      </div>
+    </div>
+
+    {/* Vista tabs */}
+    <div style={{display:'flex',gap:0,marginBottom:14,borderBottom:'0.5px solid var(--border)'}}>
+      {[{id:'registros',label:'📋 Lista de registros'},{id:'reporte',label:'📊 Vista de reporte'}].map(v=>(
+        <button key={v.id} onClick={()=>setVista(v.id)} style={{padding:'8px 16px',background:'none',border:'none',borderBottom:vista===v.id?'2px solid #BA7517':'2px solid transparent',color:vista===v.id?'#854F0B':'var(--text2)',fontWeight:vista===v.id?600:400,fontSize:13,cursor:'pointer'}}>{v.label}</button>
+      ))}
+    </div>
+
+    {/* Filtros */}
+    <div style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:10,padding:'12px 14px',marginBottom:14,display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
+      {[
+        {label:'Campo',val:filterCampo,set:setFilterCampo,opts:['Todos',...CAMPOS]},
+        {label:'Tractor',val:filterTractor,set:setFilterTractor,opts:['Todos',...ids]},
+        {label:'Actividad',val:filterActividad,set:setFilterActividad,opts:['Todos',...ACTIVIDADES_CAMPO]},
+        {label:'Cultivo',val:filterCultivo,set:setFilterCultivo,opts:['Todos',...CULTIVOS]},
+        {label:'Turno',val:filterTurno,set:setFilterTurno,opts:['Todos','DIA','NOCHE']},
+      ].map(f=><div key={f.label} style={{display:'flex',flexDirection:'column',gap:3}}>
+        <label style={{fontSize:11,color:'var(--text3)'}}>{f.label}</label>
+        <select value={f.val} onChange={e=>f.set(e.target.value)} style={{width:'auto',padding:'6px 10px',fontSize:12}}>
+          {f.opts.map(o=><option key={o}>{o}</option>)}
+        </select>
+      </div>)}
+      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+        <label style={{fontSize:11,color:'var(--text3)'}}>Desde</label>
+        <input type="date" value={filterDesde} onChange={e=>setFilterDesde(e.target.value)} style={{width:'auto',padding:'6px 10px',fontSize:12}}/>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+        <label style={{fontSize:11,color:'var(--text3)'}}>Hasta</label>
+        <input type="date" value={filterHasta} onChange={e=>setFilterHasta(e.target.value)} style={{width:'auto',padding:'6px 10px',fontSize:12}}/>
+      </div>
+      {hayFiltros&&<button onClick={limpiar} style={{alignSelf:'flex-end',padding:'6px 12px',borderRadius:6,border:'0.5px solid var(--border2)',background:'none',fontSize:12,cursor:'pointer',color:'var(--text2)'}}>✕ Limpiar</button>}
+    </div>
+
+    {loading?<Spinner/>:rows.length===0?<EmptyState msg="Sin actividades registradas con los filtros seleccionados."/>:<>
+
+      {/* Vista Lista */}
+      {vista==='registros'&&<div style={{overflowX:'auto'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+          <thead><tr style={{borderBottom:'0.5px solid var(--border)',background:'var(--bg2)'}}>
+            {['Fecha','Tractor','Campo','Actividad','Cultivo','Cuadro','Malla','Operador','Turno',''].map(h=>(
+              <th key={h} style={{padding:'8px 10px',textAlign:'left',fontWeight:500,color:'var(--text2)',whiteSpace:'nowrap'}}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {rows.map(r=><tr key={r.id} style={{borderBottom:'0.5px solid var(--border)'}}>
+              <td style={{padding:'8px 10px',whiteSpace:'nowrap',fontWeight:500}}>{r.fecha}</td>
+              <td style={{padding:'8px 10px',fontWeight:700,color:'#1D9E75'}}>{r.tractor_id}</td>
+              <td style={{padding:'8px 10px'}}><Badge color="info">{r.campo}</Badge></td>
+              <td style={{padding:'8px 10px'}}>{r.actividad}</td>
+              <td style={{padding:'8px 10px'}}><Badge color={cultivoColor[r.cultivo]||'gray'}>{r.cultivo}</Badge></td>
+              <td style={{padding:'8px 10px',color:'var(--text2)'}}>{r.cuadro||'—'}</td>
+              <td style={{padding:'8px 10px',color:'var(--text2)'}}>{r.malla||'—'}</td>
+              <td style={{padding:'8px 10px'}}>{r.operador}</td>
+              <td style={{padding:'8px 10px'}}><Badge color={r.turno==='DIA'?'warning':'gray'}>{r.turno}</Badge></td>
+              <td style={{padding:'8px 10px'}}>
+                <button onClick={()=>handleDelete(r.id)} style={{background:'none',border:'none',color:'var(--text3)',cursor:'pointer',fontSize:16}}>🗑</button>
+              </td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>}
+
+      {/* Vista Reporte — agrupado por campo y fecha como el formato */}
+      {vista==='reporte'&&<div style={{display:'flex',flexDirection:'column',gap:20}}>
+        {reporteAgrupado.map(grupo=>(
+          <div key={grupo.campo+grupo.fecha} style={{background:'var(--bg)',border:'0.5px solid var(--border)',borderRadius:12,overflow:'hidden'}}>
+            {/* Header del reporte */}
+            <div style={{background:'#1D9E75',padding:'10px 16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div>
+                <span style={{color:'#fff',fontWeight:700,fontSize:15}}>MOLINA GROUP — Reporte de Actividades</span>
+              </div>
+              <div style={{display:'flex',gap:16,fontSize:12,color:'rgba(255,255,255,0.9)'}}>
+                <span>📍 Campo: <strong>{grupo.campo}</strong></span>
+                <span>📅 {grupo.fecha}</span>
+                <span>🌾 {grupo.registros.length} actividades</span>
+              </div>
+            </div>
+            {/* Tabla del grupo */}
+            <div style={{overflowX:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead><tr style={{borderBottom:'0.5px solid var(--border)',background:'var(--bg2)'}}>
+                  <th style={{padding:'7px 10px',textAlign:'center',fontWeight:500,color:'var(--text2)',width:30}}>#</th>
+                  <th style={{padding:'7px 10px',textAlign:'left',fontWeight:500,color:'var(--text2)',whiteSpace:'nowrap'}}>Unidad</th>
+                  <th style={{padding:'7px 10px',textAlign:'left',fontWeight:500,color:'var(--text2)'}}>Actividad</th>
+                  <th style={{padding:'7px 10px',textAlign:'center',fontWeight:500,color:'var(--text2)'}}>Cultivo</th>
+                  <th style={{padding:'7px 10px',textAlign:'center',fontWeight:500,color:'var(--text2)'}}>Cuadro</th>
+                  <th style={{padding:'7px 10px',textAlign:'center',fontWeight:500,color:'var(--text2)'}}>Malla</th>
+                  <th style={{padding:'7px 10px',textAlign:'left',fontWeight:500,color:'var(--text2)'}}>Operador</th>
+                  <th style={{padding:'7px 10px',textAlign:'center',fontWeight:500,color:'var(--text2)'}}>Turno</th>
+                </tr></thead>
+                <tbody>
+                  {grupo.registros.map((r,i)=><tr key={r.id} style={{borderBottom:'0.5px solid var(--border)',background:i%2===0?'#fff':'var(--bg2)'}}>
+                    <td style={{padding:'7px 10px',textAlign:'center',color:'var(--text3)',fontWeight:600}}>{i+1}</td>
+                    <td style={{padding:'7px 10px',fontWeight:700,color:'#1D9E75'}}>{r.tractor_id}</td>
+                    <td style={{padding:'7px 10px',fontWeight:500}}>{r.actividad}</td>
+                    <td style={{padding:'7px 10px',textAlign:'center'}}><Badge color={cultivoColor[r.cultivo]||'gray'}>{r.cultivo}</Badge></td>
+                    <td style={{padding:'7px 10px',textAlign:'center',color:'var(--text2)'}}>{r.cuadro||'—'}</td>
+                    <td style={{padding:'7px 10px',textAlign:'center',color:'var(--text2)'}}>{r.malla||'—'}</td>
+                    <td style={{padding:'7px 10px'}}>{r.operador}</td>
+                    <td style={{padding:'7px 10px',textAlign:'center'}}><Badge color={r.turno==='DIA'?'warning':'gray'}>{r.turno}</Badge></td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>
+            {/* Observaciones del grupo si hay */}
+            {grupo.registros.some(r=>r.observaciones)&&(
+              <div style={{padding:'8px 16px',borderTop:'0.5px solid var(--border)',fontSize:12,color:'var(--text2)'}}>
+                <strong>Observaciones:</strong> {grupo.registros.filter(r=>r.observaciones).map(r=>r.observaciones).join(' · ')}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>}
+    </>}
+
+    {/* Formulario nuevo registro */}
+    {showForm&&<Modal title="Nueva actividad" onClose={()=>setShowForm(false)} wide>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
+        <Field label="Fecha *"><input type="date" value={form.fecha} onChange={e=>setForm(f=>({...f,fecha:e.target.value}))}/></Field>
+        <Field label="Turno">
+          <select value={form.turno} onChange={e=>setForm(f=>({...f,turno:e.target.value}))}>
+            {TURNOS.map(t=><option key={t}>{t}</option>)}
+          </select>
+        </Field>
+        <Field label="Campo *">
+          <select value={form.campo} onChange={e=>{
+            setForm(f=>({...f,campo:e.target.value,tractor_id:''}))
+          }}>
+            <option value="">Seleccionar...</option>
+            {CAMPOS.map(c=><option key={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="Tractor / Unidad *">
+          <select value={form.tractor_id} onChange={e=>{
+            const t=tractores.find(x=>x.id===e.target.value)
+            setForm(f=>({...f,tractor_id:e.target.value,operador:t?.operador||f.operador}))
+          }}>
+            <option value="">Seleccionar...</option>
+            {(form.campo?tractores.filter(t=>t.campo===form.campo):tractores).map(t=>(
+              <option key={t.id} value={t.id}>{t.id}{t.marca?` — ${t.marca}`:''}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Actividad *">
+          <select value={form.actividad} onChange={e=>setForm(f=>({...f,actividad:e.target.value}))}>
+            <option value="">Seleccionar...</option>
+            {ACTIVIDADES_CAMPO.map(a=><option key={a}>{a}</option>)}
+          </select>
+        </Field>
+        <Field label="Cultivo">
+          <select value={form.cultivo} onChange={e=>setForm(f=>({...f,cultivo:e.target.value}))}>
+            {CULTIVOS.map(c=><option key={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="Cuadro"><input type="text" placeholder="Ej: 6-8, 58-59" value={form.cuadro} onChange={e=>setForm(f=>({...f,cuadro:e.target.value}))}/></Field>
+        <Field label="Malla"><input type="text" placeholder="Ej: S1, 27, 20-18" value={form.malla} onChange={e=>setForm(f=>({...f,malla:e.target.value}))}/></Field>
+      </div>
+      <Field label="Operador *"><input type="text" placeholder="Nombre del operador" value={form.operador} onChange={e=>setForm(f=>({...f,operador:e.target.value}))}/></Field>
+      <Field label="Observaciones"><textarea value={form.observaciones} rows={2} onChange={e=>setForm(f=>({...f,observaciones:e.target.value}))} style={{resize:'vertical'}} placeholder="Observaciones adicionales..."/></Field>
+      <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:8}}>
+        <Btn outline color="#888" onClick={()=>setShowForm(false)}>Cancelar</Btn>
+        <Btn color="#BA7517" onClick={handleSubmit} disabled={saving}>{saving?'Guardando...':'Guardar registro'}</Btn>
+      </div>
+    </Modal>}
+  </div>
+}
+
 /* ── Códigos QR para tractores ── */
 function QRCodes({tractores}){
   const [filterCampo,setFilterCampo]=useState('Todos')
@@ -1298,21 +1560,23 @@ export default function App(){
   const [mtto,setMtto]=useState([])
   const [autorizaciones,setAutorizaciones]=useState([])
   const [presupuestos,setPresupuestos]=useState([])
+  const [actividades,setActividades]=useState([])
   const [loading,setLoading]=useState(true)
   const [dbError,setDbError]=useState(null)
 
   const loadAll=useCallback(async()=>{
     setLoading(true)
     try{
-      const [t,d,m,a,p]=await Promise.all([
+      const [t,d,m,a,p,ac]=await Promise.all([
         supabase.from('tractores').select('*').order('id'),
         supabase.from('diesel_registros').select('*').order('fecha',{ascending:false}),
         supabase.from('mantenimientos').select('*').order('fecha',{ascending:false}),
         supabase.from('autorizaciones_mtto').select('*').order('fecha',{ascending:false}),
         supabase.from('presupuesto_diesel').select('*'),
+        supabase.from('actividades_diarias').select('*').order('fecha',{ascending:false}),
       ])
       if(t.error||d.error||m.error||a.error){setDbError('No se pudieron cargar los datos. Verifica que las tablas existan en Supabase.')}
-      else{setTractores(t.data||[]);setDiesel(d.data||[]);setMtto(m.data||[]);setAutorizaciones(a.data||[]);setPresupuestos(p.error?[]:p.data||[])}
+      else{setTractores(t.data||[]);setDiesel(d.data||[]);setMtto(m.data||[]);setAutorizaciones(a.data||[]);setPresupuestos(p.error?[]:p.data||[]);setActividades(ac.error?[]:ac.data||[])}
     }catch(e){setDbError('Error de conexión: '+e.message)}
     setLoading(false)
   },[])
@@ -1350,6 +1614,7 @@ export default function App(){
         {page==='diesel'         && <Diesel diesel={diesel} setDiesel={setDiesel} tractores={tractores} presupuestos={presupuestos} qrTractorId={qrTractorId} loading={loading}/>}
         {page==='presupuesto'    && <Presupuesto tractores={tractores} diesel={diesel} presupuestos={presupuestos} setPresupuestos={setPresupuestos} loading={loading}/>}
         {page==='reporte'        && <ReporteDiesel diesel={diesel} tractores={tractores}/>}
+        {page==='actividades'    && <Actividades actividades={actividades} setActividades={setActividades} tractores={tractores} loading={loading}/>}
         {page==='mtto'           && <Mantenimientos mtto={mtto} setMtto={setMtto} tractores={tractores} loading={loading}/>}
         {page==='autorizaciones' && <Autorizaciones autorizaciones={autorizaciones} setAutorizaciones={setAutorizaciones} tractores={tractores} loading={loading}/>}
         {page==='analisis'       && <Analisis diesel={diesel} tractores={tractores} mtto={mtto}/>}
